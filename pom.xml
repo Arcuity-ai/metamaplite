@@ -4,7 +4,7 @@
   <groupId>gov.nih.nlm.nls</groupId>
   <artifactId>metamaplite</artifactId>
   <packaging>jar</packaging>
-  <version>3.6.2rc5</version>
+  <version>3.6.2rc8</version>
   <name>metamaplite</name>
   <url>http://maven.apache.org</url>
   <build>
@@ -115,7 +115,6 @@
       <artifactId>opennlp-maxent</artifactId>
       <version>3.0.3</version>
     </dependency>
-
     <!--
     <dependency>
       <groupId>edu.stanford.nlp</groupId>
@@ -131,12 +130,12 @@
     <dependency>
       <groupId>org.apache.logging.log4j</groupId>
       <artifactId>log4j-api</artifactId>
-      <version>2.1</version>
+      <version>2.17.2</version>
     </dependency>
     <dependency>
       <groupId>org.apache.logging.log4j</groupId>
       <artifactId>log4j-core</artifactId>
-      <version>2.13.2</version>
+      <version>2.17.2</version>
     </dependency>
     -->
     <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
@@ -145,20 +144,23 @@
       <artifactId>commons-lang3</artifactId>
       <version>3.11</version>
     </dependency>
+    <dependency>
+      <groupId>commons-logging</groupId>
+      <artifactId>commons-logging</artifactId>
+      <version>1.2</version>
+    </dependency>
     <!-- https://mvnrepository.com/artifact/org.slf4j/slf4j-api -->
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
-      <version>2.0.0-alpha1</version>
+      <version>1.7.32</version>
     </dependency>
-    <!-- https://mvnrepository.com/artifact/org.slf4j/slf4j-log4j12 -->
+    <!-- https://mvnrepository.com/artifact/org.slf4j/slf4j-jdk14 -->
     <dependency>
       <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-log4j12</artifactId>
-      <version>2.0.0-alpha1</version>
-      <scope>test</scope>
+      <artifactId>slf4j-simple</artifactId>
+      <version>1.7.32</version>
     </dependency>
-
     <dependency>
       <groupId>com.fasterxml.jackson.dataformat</groupId>
       <artifactId>jackson-dataformat-yaml</artifactId>
@@ -232,5 +234,3 @@
 
   </dependencies>
 </project>
-
-

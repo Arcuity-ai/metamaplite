@@ -24,6 +24,7 @@ import java.io.FileReader;
 import java.io.BufferedWriter;
 import java.io.PrintStream;
 import java.io.OutputStreamWriter;
+import java.io.InputStream;
 
 import bioc.BioCSentence;
 import bioc.BioCAnnotation;
@@ -75,9 +76,11 @@ public class EntityLookup4 implements EntityLookup {
     Integer.parseInt(System.getProperty("metamaplite.entitylookup4.maxtokensize","15"));
   SpecialTerms excludedTerms = new SpecialTerms();
   SentenceAnnotator sentenceAnnotator;
+  SentenceExtractor sentenceExtractor;
   NegationDetector negationDetector;
   boolean addPartOfSpeechTagsFlag =
     Boolean.parseBoolean(System.getProperty("metamaplite.enable.postagging","true"));
+  Properties properties;
 
   /** Part of speech tags used for term lookup, can be set using
    * property: metamaplite.postaglist; the tag list is a set of Penn
@@ -106,10 +109,16 @@ public class EntityLookup4 implements EntityLookup {
     new HashMap<String,UserDefinedAcronym<TermInfo>>();
 
   Map<String,String> uaMap = new HashMap<String,String>();
-  
+
+  /**
+   * Instantiate EntityLookup4 instance
+   *
+   * @param properties metamaplite properties instance
+   */
   public EntityLookup4(Properties properties) 
     throws IOException, FileNotFoundException
   {
+    this.properties = properties;
     MMLDictionaryLookupRegistry registry = new MMLDictionaryLookupRegistry();
     registry.put("ivf", new IVFLookup());
     registry.put("mapdb", new MapDbLookup());
@@ -143,14 +152,16 @@ public class EntityLookup4 implements EntityLookup {
 						  Boolean.toString(addPartOfSpeechTagsFlag)));
 
     if (this.addPartOfSpeechTagsFlag) {
-      this.sentenceAnnotator = new OpenNLPPoSTagger(properties);
-      String allowedPartOfSpeechTaglist = properties.getProperty("metamaplite.postaglist");
-      if (allowedPartOfSpeechTaglist != null) {
-	for (String pos: allowedPartOfSpeechTaglist.split(",")) {
-	  this.allowedPartOfSpeechSet.add(pos);
-	} 
-      } else {
-	this.defaultAllowedPartOfSpeech();
+      if (this.sentenceAnnotator == null) {
+	this.sentenceAnnotator = new OpenNLPPoSTagger(properties);
+	String allowedPartOfSpeechTaglist = properties.getProperty("metamaplite.postaglist");
+	if (allowedPartOfSpeechTaglist != null) {
+	  for (String pos: allowedPartOfSpeechTaglist.split(",")) {
+	    this.allowedPartOfSpeechSet.add(pos);
+	  } 
+	} else {
+	  this.defaultAllowedPartOfSpeech();
+	}
       }
     } else {
       this.allowedPartOfSpeechSet.add(""); // empty if not part-of-speech tagged (accept everything)
@@ -189,6 +200,32 @@ public class EntityLookup4 implements EntityLookup {
 	logger.info(acronym.getKey() + " -> " + acronym.getValue());
       }
       this.uaMap = UserDefinedAcronym.udasToUA(this.udaMap);
+    }
+  }
+
+  /**
+   * Set tagger using input stream, usually from a resource
+   * (classpath, servlet context, etc.)
+   *
+   * @param properties properties instance
+   * @param instream input stream
+   */
+  public void setPoSTagger(Properties properties, InputStream instream) {
+    if (this.addPartOfSpeechTagsFlag) {
+      // skip this if pos tag is false
+      if (this.sentenceAnnotator == null) {
+	this.sentenceAnnotator = new OpenNLPPoSTagger(instream);
+	String allowedPartOfSpeechTaglist = properties.getProperty("metamaplite.postaglist");
+	if (allowedPartOfSpeechTaglist != null) {
+	  for (String pos: allowedPartOfSpeechTaglist.split(",")) {
+	    this.allowedPartOfSpeechSet.add(pos);
+	  } 
+	} else {
+	  this.defaultAllowedPartOfSpeech();
+	}
+      }
+    } else {
+      this.allowedPartOfSpeechSet.add(""); // empty if not part-of-speech tagged (accept everything)
     }
   }
 
@@ -536,6 +573,90 @@ n   * <pre>
     return entityList;
   }
 
+  /** Process text string */
+  public List<Entity> processText(String docid,
+				  String fieldid,
+				  String text,
+				  boolean detectNegationsFlag,
+				  Set<String> semTypeRestrictSet,
+				  Set<String> sourceRestrictSet) {
+    EntityStartComparator entityComparator = new EntityStartComparator();
+    try {
+      Set<Entity> entitySet0 = new HashSet<Entity>();
+      int i = 0;
+      if (this.sentenceExtractor == null) {
+	this.sentenceExtractor = new OpenNLPSentenceExtractor(this.properties);
+      }
+      List<Sentence> sentenceList = this.sentenceExtractor.createSentenceList(text);
+      for (Sentence sentence: sentenceList) {
+	List<ERToken> tokenList = Scanner.analyzeText(sentence);
+	if (this.addPartOfSpeechTagsFlag) {
+	  sentenceAnnotator.addPartOfSpeech(tokenList);
+	}
+	Set<Entity> sentenceEntitySet =
+	  this.processSentenceTokenList(docid, fieldid, tokenList,
+					semTypeRestrictSet,
+					sourceRestrictSet);
+	sentenceEntitySet.addAll(UserDefinedAcronym.generateEntities
+				 (docid, this.udaMap, tokenList));
+	for (Entity entity: sentenceEntitySet) {
+	  entity.setLocationPosition(i);
+	}
+	entitySet0.addAll(sentenceEntitySet);
+	i++;
+      }
+      // look for negation and other relations using Context.
+      for (Sentence sentence: sentenceList) {
+	List<ERToken> tokenList = Scanner.analyzeText(sentence);
+
+	// mark abbreviations that are entities and add them to entity set.
+	
+	Set<Entity> abbrevEntitySet =
+	  new HashSet(MarkAbbreviations.markAbbreviations
+		      (text, this.uaMap,
+		       new ArrayList(entitySet0)));
+	// dbg
+	// for (Entity entity: abbrevEntitySet) {
+	//   logger.debug("abbrevEntitySet.entity: " + entity);
+	// }
+	// end of dbg
+	entitySet0.addAll(abbrevEntitySet);
+	if (detectNegationsFlag) {
+	  detectNegations(entitySet0, sentence.getText(), tokenList);
+	}
+      }
+
+      Set<Entity> entitySet1 = new HashSet<Entity>();
+      for (Entity entity: entitySet0) {
+	ConceptInfoUtils.filterEntityEvListBySemanticType(entity, semTypeRestrictSet);
+	ConceptInfoUtils.filterEntityEvListBySource(entity, sourceRestrictSet);
+	if (entity.getEvList().size() > 0) {
+	  entitySet1.add(entity);
+	}
+      }
+      Set<Entity> entitySet = removeSubsumedEntities(entitySet1);
+
+      List<Entity> resultList = new ArrayList<Entity>(entitySet);
+      Collections.sort(resultList, entityComparator);
+      return resultList;
+    } catch (FileNotFoundException fnfe) {
+      throw new RuntimeException(fnfe);
+    } catch (IOException ioe) {
+      throw new RuntimeException(ioe);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  /** Process text string */
+  public List<Entity> processText(String text,
+				  boolean useNegationDetection,
+				  Set<String> semTypeRestrictSet,
+				  Set<String> sourceRestrictSet) {
+    return processText("000000", "text", text, useNegationDetection,
+		       semTypeRestrictSet, sourceRestrictSet);
+  }
+
   /** Process passage */
   public List<Entity> processPassage(String docid, BioCPassage passage,
 				     boolean detectNegationsFlag,
@@ -583,15 +704,16 @@ n   * <pre>
 	}
       }
 
-      Set<Entity> entitySet1 = removeSubsumedEntities(entitySet0);
-      Set<Entity> entitySet = new HashSet<Entity>();
-      for (Entity entity: entitySet1) {
+      Set<Entity> entitySet1 = new HashSet<Entity>();
+      for (Entity entity: entitySet0) {
 	ConceptInfoUtils.filterEntityEvListBySemanticType(entity, semTypeRestrictSet);
 	ConceptInfoUtils.filterEntityEvListBySource(entity, sourceRestrictSet);
 	if (entity.getEvList().size() > 0) {
-	  entitySet.add(entity);
+	  entitySet1.add(entity);
 	}
       }
+      Set<Entity> entitySet = removeSubsumedEntities(entitySet1);
+
       List<Entity> resultList = new ArrayList<Entity>(entitySet);
       Collections.sort(resultList, entityComparator);
       return resultList;

@@ -1120,7 +1120,7 @@ public class MetaMapLite {
       }
       pw.println("--");
       pw.println("--phraselist--");
-      logger.debug("minimalSentenceTokenList: " + minimalSentenceTokenList);
+      logger.debug("Processed minimalSentenceTokenList with size: " + minimalSentenceTokenList.size());
       List<Phrase> phraseList = this.chunkerMethod.applyChunker(minimalSentenceTokenList);
       for (Phrase phrase: phraseList) {
 	pw.println("phrase: " + phrase.toString());

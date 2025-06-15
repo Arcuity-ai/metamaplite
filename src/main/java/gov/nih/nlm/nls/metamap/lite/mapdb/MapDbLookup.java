@@ -150,7 +150,7 @@ public class MapDbLookup implements MMLDictionaryLookup<TermInfo> {
 
   public int lookupVariant(String term) {
     int variance = 9;		// maximum variance (should this value be larger?)
-    logger.debug("term: " + term);
+    logger.debug("Processing term.");
     for (String[] varFields: (List<String[]>)this.variantMap.get(term)) {
       if ((varFields[2].toLowerCase().equals(term.toLowerCase()))) {
 	variance = Integer.parseInt(varFields[4]); // use varlevel field

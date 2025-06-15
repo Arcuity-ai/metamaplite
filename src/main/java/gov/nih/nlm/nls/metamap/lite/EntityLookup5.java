@@ -75,9 +75,13 @@ import gov.nih.nlm.nls.metamap.evaluation.Scoring;
  */
 
 public class EntityLookup5 implements EntityLookup {
-  private static final Logger logger = LoggerFactory.getLogger(EntityLookup5.class);
+    private static final Logger logger = LoggerFactory.getLogger(EntityLookup5.class);
 
-  ChunkerMethod chunkerMethod;
+    // How long of a token can we consider for an entity map?
+    public static final int DEFAULT_MIN_ORIG_TERM_LENGTH = 3; // Original EntityLookup5 hard-coded ≥3
+    public final int MIN_ORIG_TERM_LENGTH;
+
+    ChunkerMethod chunkerMethod;
   
   public MMLDictionaryLookup<TermInfo> dictionaryLookup;
   int MAX_TOKEN_SIZE =
@@ -95,6 +99,15 @@ public class EntityLookup5 implements EntityLookup {
    * property: metamaplite.postaglist; the tag list is a set of Penn
    * Treebank part of speech tags separated by commas. */
   Set<String> allowedPartOfSpeechSet = new HashSet<String>();
+
+    /**
+     * Normally, only runs of tokens whose first token's first character is alphanumeric
+     * (a-zA-Z0-9 plus greek letters) are considered for matching; however, we want to
+     * enable
+     */
+  boolean considerNonAlphaTokens;
+  Set<Character> additionalTokenStartChars = new HashSet<Character>();
+
   public void defaultAllowedPartOfSpeech() {
     this.allowedPartOfSpeechSet.add("CD"); // cardinal number (need this for chemicals)
     this.allowedPartOfSpeechSet.add("FW"); // foreign word
@@ -125,11 +138,16 @@ public class EntityLookup5 implements EntityLookup {
     this.allowedPhraseTypeSet.add("NP"); // just noun phrases for now.
   }
 
+  // In cases where there are subsumed (entirely overlapped) entities, do we remove them?
+  // For example, "blood sugar level" and "blood sugar"
+  // Most of the time, the answer is "yes"; in some high-recall scenarios, we don't want to.
+  boolean shouldRemoveSubsumedEntities = true;
+
   public EntityLookup5(Properties properties) 
     throws IOException, FileNotFoundException
   {
     MMLDictionaryLookupRegistry registry = new MMLDictionaryLookupRegistry();
-    registry.put("ivf", new IVFLookup());
+    registry.put("ivf", new IVFLookup(properties));
     registry.put("mapdb", new MapDbLookup());
     String directoryPath = properties.getProperty("metamaplite.index.directory");
     if (! new File(directoryPath).exists()) {
@@ -146,7 +164,7 @@ public class EntityLookup5 implements EntityLookup {
       this.dictionaryLookup.init(properties);
     } else {
       if (entry == null) {
-	this.dictionaryLookup = new IVFLookup();
+	this.dictionaryLookup = new IVFLookup(properties);
       } else {
 	this.dictionaryLookup = entry.getValue();
       }
@@ -174,6 +192,15 @@ public class EntityLookup5 implements EntityLookup {
     } else {
       this.allowedPartOfSpeechSet.add(""); // empty if not part-of-speech tagged (accept everything)
     }
+
+    this.considerNonAlphaTokens  = Boolean.parseBoolean(properties.getProperty("metamaplite.entitylookup5.considerNonAlphaTokens", "false"));
+    if (this.considerNonAlphaTokens) { // no need to bother with this if we're not allowing non-alpha tokens
+        String bonusChars = properties.getProperty("metamaplite.entitylookup5.additionalAllowedFirstChars", "");
+        for (char c : bonusChars.toCharArray()) {
+            this.additionalTokenStartChars.add(c);
+        }
+    }
+
     String allowedPhraseTypeList = properties.getProperty("metamaplite.phrasetypelist");
     if (allowedPhraseTypeList != null) {
       for (String phraseType: allowedPhraseTypeList.split(",")) {
@@ -265,6 +292,24 @@ public class EntityLookup5 implements EntityLookup {
 	logger.info(acronym.getKey() + " -> " + acronym.getValue());
       }
       this.uaMap = UserDefinedAcronym.udasToUA(this.udaMap);
+    }
+
+    // remove subsumed?
+    if (properties.containsKey("metamaplite.removeSubsumedEntities")) {
+      this.shouldRemoveSubsumedEntities = Boolean.parseBoolean(properties.getProperty("metamaplite.removeSubsumedEntities"));
+    }
+
+    // Now check for custom minimum token lengths
+    if (properties.containsKey("metamaplite.entitylookup5.min_token_length")) {
+        // validate: must be > 0
+        int tempTokenLength = Integer.parseInt(properties.getProperty("metamaplite.entitylookup5.min_token_length"));
+        if (tempTokenLength >= 1) {
+            this.MIN_ORIG_TERM_LENGTH = Integer.parseInt(properties.getProperty("metamaplite.entitylookup5.min_token_length"));
+        } else {
+            this.MIN_ORIG_TERM_LENGTH = DEFAULT_MIN_ORIG_TERM_LENGTH;
+        }
+    } else {
+        this.MIN_ORIG_TERM_LENGTH = DEFAULT_MIN_ORIG_TERM_LENGTH;
     }
   }
 
@@ -385,14 +430,26 @@ public class EntityLookup5 implements EntityLookup {
        	  (lastToken.getOffset() + lastToken.getText().length()) - firstToken.getOffset() : 
        	  firstToken.getText().length();
        	String originalTerm = StringUtils.join(tokenTextSubList, "");
-	if ((originalTerm.length() > 2) &&
+	if ((originalTerm.length() >= MIN_ORIG_TERM_LENGTH) &&
 	    (CharUtils.isAlphaNumeric(originalTerm.charAt(originalTerm.length() - 1)))) {
 	 
 	  // String term = originalTerm;
 	  // String query = term;
 	  normTerm = NormalizedStringCache.normalizeString(originalTerm);
 	  int offset = ((PosToken)tokenSubList.get(0)).getOffset();
-	  if (CharUtils.isAlphaNumeric(originalTerm.charAt(0))) {
+
+      // Should we see if we can find a match for tokenSubList?
+      boolean shouldConsiderMatch = false;
+
+      char firstChar = originalTerm.charAt(0);
+      if (CharUtils.isAlphaNumeric(firstChar)) { // fast path, most likely
+          // If we're dealing with an alphanumeric start char, we always allow
+          shouldConsiderMatch = true;
+      } else if (this.considerNonAlphaTokens && this.additionalTokenStartChars.contains(firstChar)) {
+          // Depending on settings and what that first char is, maybe allow this token
+          shouldConsiderMatch = true;
+      }
+	  if (shouldConsiderMatch) {
 	    Set<Ev> evSet = new HashSet<Ev>();
 	    Integer tokenListLength = new Integer(tokenSubList.size());
 
@@ -920,8 +977,13 @@ public class EntityLookup5 implements EntityLookup {
 	}
       }
 
-      // remove any entities subsumed by another entity
-      Set<Entity> entitySet1 = removeSubsumedEntities(entitySet0);
+      Set<Entity> entitySet1;
+      if (this.shouldRemoveSubsumedEntities) {
+          // remove any entities subsumed by another entity
+          entitySet1 = removeSubsumedEntities(entitySet0);
+      } else {
+          entitySet1 = entitySet0;
+      }
       // filter entities by semantic type and source sets.
       Set<Entity> entitySet = new HashSet<Entity>();
       for (Entity entity: entitySet1) {
@@ -999,7 +1061,12 @@ public class EntityLookup5 implements EntityLookup {
       }
       
       // remove any entities subsumed by another entity
-      Set<Entity> entitySet1 = removeSubsumedEntities(entitySet0);
+      Set<Entity> entitySet1;
+      if (this.shouldRemoveSubsumedEntities) {
+          entitySet1 = removeSubsumedEntities(entitySet0);
+      } else {
+          entitySet1 = entitySet0;
+      }
       // filter entities by semantic type and source sets.
       Set<Entity> entitySet = new HashSet<Entity>();
       for (Entity entity: entitySet1) {
@@ -1047,7 +1114,12 @@ public class EntityLookup5 implements EntityLookup {
       }
       i++;
     }
-    Set<Entity> entitySet = removeSubsumedEntities(entitySet0);
+    Set<Entity> entitySet;
+    if (this.shouldRemoveSubsumedEntities) {
+        entitySet = removeSubsumedEntities(entitySet0);
+    } else {
+        entitySet = entitySet0;
+    }
     List<Entity> resultList = new ArrayList<Entity>(entitySet);
     Collections.sort(resultList, entityComparator);
     return resultList;
@@ -1059,11 +1131,13 @@ public class EntityLookup5 implements EntityLookup {
     String fieldid = "text";
     try {
       Set<BioCAnnotation> bioCEntityList = new HashSet<BioCAnnotation>();
-      Set<Entity> entitySet = 
-	removeSubsumedEntities
-	(this.processSentenceTokenList(docid, fieldid, sentenceTokenList,
-				       new HashSet<String>(),
-				       new HashSet<String>()));
+      Set<Entity> entitySet = this.processSentenceTokenList(docid, fieldid, sentenceTokenList,
+              new HashSet<String>(),
+              new HashSet<String>());
+      if (this.shouldRemoveSubsumedEntities) {
+          entitySet = removeSubsumedEntities(entitySet);
+      }
+
       for (Entity entity: entitySet) {
 	for (Ev ev: entity.getEvList()) {
 	  BioCAnnotation entityAnnotation = new BioCAnnotation();

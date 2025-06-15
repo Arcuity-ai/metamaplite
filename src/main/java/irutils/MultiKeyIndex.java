@@ -298,7 +298,7 @@ public class MultiKeyIndex {
     throws IOException
   {
     extentsRaf.seek(entry.getAddress());
-    for (int i = 0; i < entry.getNumberOfPostings(); i++) {
+    for (long i = 0; i < entry.getNumberOfPostings(); i++) {
       long offset = extentsRaf.readLong();
       long length = extentsRaf.readLong();
       postingsRaf.seek(offset);

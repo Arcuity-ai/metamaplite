@@ -574,7 +574,7 @@ public class EntityLookup5 implements EntityLookup {
       ERToken lastToken = newTokenlist.get(newTokenlist.size() - 1);
       int firstIndex = originalTokenList.indexOf(firstToken);
       int lastIndex = originalTokenList.indexOf(lastToken);
-      logger.debug("firstToken: " + firstToken);
+      logger.debug("Processing first token in the list.");
       logger.debug("lastToken: " + lastToken);
       logger.debug("firstIndex: " + firstIndex);
       logger.debug("lastIndex: " + lastIndex);

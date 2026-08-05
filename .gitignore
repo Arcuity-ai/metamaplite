@@ -1,0 +1,13 @@
+# Gradle
+.gradle/
+build/
+
+# Build output -- shared with the Maven build (see build.gradle: the Gradle
+# build writes target/classes and target/*.jar so metamaplite.sh, run.sh and
+# metamaplite.bat keep working unchanged).
+target/
+
+# Bootstrapped dependency jars. NOT committed: this is a public fork of
+# LHNCBC/metamaplite and we do not redistribute NLM/JavaConText binaries from
+# it. Recreate them with: bash scripts/fetch-nlm-jars.sh   (see lib/README.md)
+lib/*.jar

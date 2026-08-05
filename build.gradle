@@ -1,36 +1,140 @@
-apply plugin: 'java'
-apply plugin: 'maven'
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
 
 group = 'gov.nih.nlm.nls'
-version = '3.6.2rc5'
+version = '3.6.2rc8'
 
 description = """metamaplite"""
 
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
+// Emit into target/ with Maven's layout so metamaplite.sh, metamaplite.bat and
+// run.sh keep working unchanged -- they reference target/classes and
+// target/metamaplite-${MML_VERSION}-standalone.jar.
+layout.buildDirectory = layout.projectDirectory.dir('target')
+
+sourceSets {
+    main { java { destinationDirectory = layout.projectDirectory.dir('target/classes') } }
+    test { java { destinationDirectory = layout.projectDirectory.dir('target/test-classes') } }
+}
+
+java {
+    // Raised from pom.xml's 1.8 because opennlp-tools 2.5.9+ -- the first
+    // release fixing GHSA-cx4m-2p55-rw7j / GHSA-4v8g-86x5-3vrc (both CRITICAL)
+    // -- is built for Java 17 and cannot be consumed from a Java 8 target.
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.encoding = 'UTF-8'
+    options.debug = true
+    options.debugOptions.debugLevel = 'lines,vars,source'
+}
 
 repositories {
-     mavenLocal()
-     maven { url "http://svn.code.sf.net/p/bionlp/code/repo" }
-     maven { url "http://central.maven.org/maven2/" }
-     maven { url "https://metamap.nlm.nih.gov/maven2/" }
-     maven { url 'https://jitpack.io' }
+    // Deliberately no mavenLocal(): ~/.m2 holds a lvgdist:2020.0 entry with a
+    // pom but no jar (left by a failed download from the dead NLM host), and
+    // mavenLocal would shadow Central with it. Everything below is reproducible.
+    mavenCentral()
+
+    // bioc:bioc:1.0.1 and context:context:2012 only ever existed on
+    // https://metamap.nlm.nih.gov/maven2/, which is now NXDOMAIN. Upstream
+    // ships them in a public_mm_lite distribution's lib/ -- see README.md
+    // "install Context, BioC, and NLS NLP libraries". Keep those two jars in
+    // lib/ and they resolve from here without any mvn install:install-file step.
+    flatDir { dirs 'lib' }
 }
+
 dependencies {
-    compile group: 'org.apache.opennlp', name: 'opennlp-tools', version:'1.5.3'
-    compile group: 'org.apache.opennlp', name: 'opennlp-maxent', version:'3.0.3'
-    compile group: 'edu.stanford.nlp', name: 'stanford-corenlp', version:'3.3.1'
-    compile group: 'edu.stanford.nlp', name: 'stanford-corenlp', version:'3.3.1', classifier:'models'
-    compile group: 'org.apache.logging.log4j', name: 'log4j-api', version:'2.1'
-    compile group: 'org.apache.logging.log4j', name: 'log4j-core', version:'2.1'
-    compile group: 'context', name: 'context', version:'2012'
-    // compile group: 'bioc', name: 'bioc', version:'1.0.1'
-    compile group: 'com.github.openbiocuration', name: 'BioC_Java', version: 'c119c35b58'
-    implementation 'com.github.openbiocuration:BioC_Java:Tag?'
-    compile group: 'gov.nih.nlm.nls', name: 'nlp', version:'2.4.C'
-    compile group: 'gov.nih.nlm.nls', name: 'aec_mrd_wsd', version:'1.0-SNAPSHOT'
-    compile group: 'net.sf.opencsv', name: 'opencsv', version:'2.3'
-    compile group: 'gov.nih.nlm.nls.lvg', name: 'lvgdist', version: '2020.0'
-    compile group: 'org.json', name: 'json', version: '20180813'
-    testCompile group: 'junit', name: 'junit', version:'4.11'
+    implementation 'com.github.jankroken:commandline:1.7.0'
+    implementation 'org.apache.opennlp:opennlp-tools:2.5.11'
+    implementation 'org.apache.commons:commons-lang3:3.20.0'
+    implementation 'commons-logging:commons-logging:1.2'
+    // Must stay on the 2.x line: opennlp-tools 2.5.x brings slf4j-api 2.x, whose
+    // ServiceLoader-based provider lookup does not recognise a 1.7.x binding.
+    // Leaving slf4j-simple at 1.7.32 silently disables ALL logging (SLF4J falls
+    // back to the NOP logger).
+    implementation 'org.slf4j:slf4j-api:2.0.18'
+    implementation 'org.slf4j:slf4j-simple:2.0.18'
+    // 2.22.1 is the first release outside every vulnerable range across the
+    // 2.18/2.19-2.21/2.22 branches of GHSA-5jmj-h7xm-6q6v, GHSA-rmj7-2vxq-3g9f,
+    // GHSA-j3rv-43j4-c7qm, GHSA-3pjw-73gf-8qr5, GHSA-hgj6-7826-r7m5,
+    // GHSA-r7wm-3cxj-wff9 and GHSA-72hv-8253-57qq (databind + core).
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.22.1'
+    implementation 'context:context:2012'
+    implementation 'bioc:bioc:1.0.1'
+    implementation 'net.sf.opencsv:opencsv:2.3'
+    implementation 'xmlunit:xmlunit:1.4'
+    implementation 'org.apache.uima:uimaj-core:3.5.0'
+    // lvgdist is published with <packaging>pom</packaging> and attaches its jar
+    // as a secondary artifact. Maven resolves that jar anyway; Gradle honours
+    // the packaging and would hand back an empty module, so ask for the jar
+    // explicitly. The pom declares no dependencies, so nothing is lost.
+    implementation('gov.nih.nlm.nls.lvg:lvgdist:2020.0') {
+        artifact {
+            name = 'lvgdist'
+            type = 'jar'
+            extension = 'jar'
+        }
+    }
+    implementation 'org.json:json:20231013'
+    implementation 'net.sourceforge.argparse4j:argparse4j:0.8.1'
+    implementation 'info.debatty:java-string-similarity:0.23'
+    // mapdb 3.1.0 is the latest release and drags in net.jpountz.lz4:lz4:1.3.0,
+    // an abandoned coordinate with NO patched version for GHSA-vqf4-7m7x-wgfc
+    // and GHSA-cmp6-m4wj-q63q (both HIGH). MapDB only needs LZ4 for compressed
+    // stores; MapDbLookup and BuildDictionaries use plain DBMaker.fileDB(), and
+    // nothing in src/ references LZ4, so it is excluded rather than shipped.
+    implementation('org.mapdb:mapdb:3.1.0') {
+        exclude group: 'net.jpountz.lz4', module: 'lz4'
+    }
+
+    // JAXB was removed from the JDK in Java 11. MedlineDomReader imports
+    // javax.xml.bind.annotation.W3CDomHandler, so it has to come from a
+    // dependency now that we target 17. 2.3.3 is the last release under the
+    // javax namespace, so no source changes are needed.
+    implementation 'jakarta.xml.bind:jakarta.xml.bind-api:2.3.3'
+
+    testImplementation 'junit:junit:4.13.1'
+}
+
+tasks.withType(Jar).configureEach {
+    destinationDirectory = layout.projectDirectory.dir('target')
+}
+
+// Replaces maven-shade-plugin: an uber-jar attached with the "standalone"
+// classifier, minus the signature files shade filtered out.
+tasks.register('standaloneJar', Jar) {
+    group = 'build'
+    description = 'Assembles a self-contained jar with all runtime dependencies.'
+
+    archiveClassifier = 'standalone'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    manifest {
+        attributes 'Main-Class': 'gov.nih.nlm.nls.ner.MetaMapLite'
+    }
+
+    from sourceSets.main.output
+    from({
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }) {
+        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+        exclude 'module-info.class'
+    }
+}
+
+tasks.named('assemble') {
+    dependsOn tasks.named('standaloneJar')
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            artifact tasks.named('standaloneJar')
+        }
+    }
 }

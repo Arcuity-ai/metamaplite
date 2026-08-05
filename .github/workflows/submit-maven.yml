@@ -1,0 +1,72 @@
+# Maven dependency submission.
+#
+# Replaces GitHub's managed "Automatic Dependency Submission (Maven)", which
+# cannot work on this repository: it runs bare `mvn` on a vanilla runner, and
+# pom.xml depends on context:context:2012 and bioc:bioc:1.0.1. Those were only
+# ever published to metamap.nlm.nih.gov, a host NLM has decommissioned; the
+# artifacts now live behind UMLS Terminology Services authentication. The
+# managed workflow takes no secrets and no setup steps, so it fails on every
+# run and has done since NLM retired the repository.
+#
+# This workflow does the same job with the two jars installed first, so the
+# Maven dependency graph is actually complete rather than absent.
+#
+# Requires the UMLS_API_KEY secret (UTS -> Profile -> API Key). Secrets are
+# never exposed to workflows triggered by pull requests from forks, so this
+# degrades to a skip there rather than leaking or failing confusingly.
+
+name: Maven Dependency Submission
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # required to submit the dependency snapshot
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Check UMLS credentials are available
+        id: creds
+        env:
+          UMLS_API_KEY: ${{ secrets.UMLS_API_KEY }}
+        run: |
+          if [ -z "$UMLS_API_KEY" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::UMLS_API_KEY is not available (fork PR, or secret unset)."
+            echo "::warning::Skipping Maven dependency submission -- context/bioc cannot be resolved without it."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch the NLM jars from UTS
+        if: steps.creds.outputs.available == 'true'
+        env:
+          UMLS_API_KEY: ${{ secrets.UMLS_API_KEY }}
+        run: bash scripts/fetch-nlm-jars.sh
+
+      - name: Install the NLM jars into the local Maven repository
+        if: steps.creds.outputs.available == 'true'
+        run: |
+          mvn -B -q install:install-file \
+            -Dfile=lib/context-2012.jar \
+            -DgroupId=context -DartifactId=context -Dversion=2012 -Dpackaging=jar
+          mvn -B -q install:install-file \
+            -Dfile=lib/bioc-1.0.1.jar \
+            -DgroupId=bioc -DartifactId=bioc -Dversion=1.0.1 -Dpackaging=jar
+
+      - name: Submit the Maven dependency snapshot
+        if: steps.creds.outputs.available == 'true'
+        uses: advanced-security/maven-dependency-submission-action@v5
